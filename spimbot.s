@@ -51,8 +51,7 @@ REQUEST_PUZZLE_INT_MASK = 0x800
 # data things go here
 .align 2
 TILE_DATA: .space 1600
-puzzle_data: .space 4096
-solution: .space 680
+
 three:	.float	3.0
 five:	.float	5.0
 PI:	.float	3.141592
@@ -73,31 +72,117 @@ main:
     la   $t0, TILE_DATA
     sw   $t0, TILE_SCAN
 
-    lw   $t0, GET_NUM_WATER_DROPS
-
-    li   $t0, 0
-    sw   $t0, SET_RESOURCE_TYPE
-    la   $t0, puzzle_data
-    sw   $t0, REQUEST_PUZZLE
-    la   $a0, solution
-    la   $a1, puzzle_data
-    jal  recursive_backtracking
-    la   $t0, solution
-    sw   $t0, SUBMIT_SOLUTION
-
-    lw   $t0, GET_NUM_WATER_DROPS
+    li   $a0, 15
+    li   $a1, 225
+    jal  move_to
 
 main_loop:
-    lw   $t0, GET_NUM_SEEDS
-    beq  $t0, $0, request_seed
-    sw   $0, SEED_TILE
-    li   $t0, 1
-    sw   $t0, WATER_TILE
-    lw   $t0, GET_NUM_WATER_DROPS
-request_seed:
+	la   $s0, TILE_DATA
+	li   $s1, 0			#s1=x of current position
+	li   $s2, 7			#s2=y of current position
+	mul  $s3, $s2, 10   
+	add  $s3, $s3, $s1  #s3=index of current tile
+	li   $s4, -1  		#s4=index of empty cell with cloest distance
+	li   $s5, 300 		#s5=cloest distance to the empty cell
+col_loop:
+	bge  $s2, 10, col_loop_done
+	mul  $t0, $s3, 16
+	add  $t0, $t0, $s0  #t3=address of current tile
+	lw   $t1, 4($t0)
+	bne  $t1, 0, col_skip
+	lw   $t1, 8($t0)    #t1=growth
+	bge  $t1, 512, harvestable_found
+	lw   $t1, 0($t0)	#t1=state
+	bne  $t1, 0, col_skip
+	lw   $a0, BOT_X
+	lw   $a1, BOT_Y
+	sub  $a0, $a0, $s1
+	sub  $a1, $a1, $s2
+	jal  euclidean_dist
+	bge  $v0, $s5, col_skip
+	mov  $s3, $s5
+col_skip:
+	add
+	j 	 col1_loop
+
+col_loop_done:
+
+harvestable_found:
+	div  $t3, 10
+	mfhi $a0
+	mflo $a1
+	jal harvest
+
+main_loop_done:
+
     j    main_loop
 
 	j	 main
+
+# -----------------------------------------------------------------------
+# move_to - move the bot to target cell and harvest
+# $a0 - target x
+# $a1 - target y
+# returns nothing
+# -----------------------------------------------------------------------
+harvest:
+	sub  $sp, $sp, 4
+	sw   $ra, 0($sp)
+	jal  move_to
+	sw   $0, HARVEST_TILE
+	lw   $ra, 0($sp)
+	add  $sp, $sp, 4
+	jr   $ra
+
+# -----------------------------------------------------------------------
+# move_to - move the bot to target cell
+# $a0 - target x
+# $a1 - target y
+# returns nothing
+# -----------------------------------------------------------------------
+move_to:
+	sub  $sp, $sp, 12
+	sw   $ra, 0($sp)
+	sw   $a0, 4($sp)
+	sw   $a1, 8($sp)
+	lw   $t0, BOT_X
+	lw   $t1, BOT_Y
+	sub  $a0, $a0, $t0
+	sub  $a1, $a1, $t1
+	jal  sb_arctan
+	lw   $a0, 4($sp)
+	lw   $a1, 8($sp)
+	sw   $v0, ANGLE
+	li   $t0, 1
+	sw   $t0, ANGLE_CONTROL
+	li   $t0, 10
+	sw   $t0, VELOCITY
+move_to_loop:
+	lw   $t0, BOT_X
+	bne  $a0, $t0, move_to_loop
+move_to_done:
+	sw   $0, VELOCITY
+	lw   $ra, 0($sp)
+	add  $sp, $sp, 12
+	jr   $ra
+
+# -----------------------------------------------------------------------
+# euclidean_dist - computes sqrt(x^2 + y^2)
+# $a0 - x
+# $a1 - y
+# returns the distance
+# -----------------------------------------------------------------------
+
+euclidean_dist:
+	mul	$a0, $a0, $a0	# x^2
+	mul	$a1, $a1, $a1	# y^2
+	add	$v0, $a0, $a1	# x^2 + y^2
+	mtc1	$v0, $f0
+	cvt.s.w	$f0, $f0	# float(x^2 + y^2)
+	sqrt.s	$f0, $f0	# sqrt(x^2 + y^2)
+	cvt.w.s	$f0, $f0	# int(sqrt(...))
+	mfc1	$v0, $f0
+	jr	$ra
 
 # -----------------------------------------------------------------------
 # sb_arctan - computes the arctangent of y / x
@@ -105,7 +190,6 @@ request_seed:
 # $a1 - y
 # returns the arctangent
 # -----------------------------------------------------------------------
-.globl sb_arctan
 sb_arctan:
 	li	$v0, 0		# angle = 0;
 
@@ -154,6 +238,7 @@ pos_x:
 	add	$v0, $v0, $t0	# angle += delta
 
 	jr 	$ra
+
 
 #puzzle functions
 get_domain_for_cell:
